@@ -3,36 +3,53 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Activity, Heart, TrendingUp } from "lucide-react"
-import { supabase } from "../lib/supabase"
+import { supabase } from "@/lib/supabase"
 
+/**
+ * Splash / loading screen.
+ *  • Tries to get the current session.
+ *  • Gracefully handles a network failure so the app never crashes.
+ */
 export default function SplashPage() {
-  const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<null | string>(null)
 
+  /** Check auth once on mount */
   useEffect(() => {
-    const checkAuth = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+    const check = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession()
 
-      setTimeout(() => {
-        setIsLoading(false)
-        setTimeout(() => {
-          if (session) {
-            router.push("/dashboard")
-          } else {
-            router.push("/auth/login")
-          }
-        }, 500)
-      }, 2500)
+        // If we got an error from Supabase itself, show it but keep going.
+        if (error) {
+          console.error("Supabase session error →", error.message)
+          setError("Can’t reach Supabase right now, running in offline mode.")
+        }
+
+        // Decide where to go next.
+        if (data.session) {
+          router.replace("/dashboard")
+        } else {
+          router.replace("/auth/login")
+        }
+      } catch (err) {
+        // Network / CORS / DNS failure → stay calm & keep UX alive.
+        console.error("Network error while talking to Supabase →", err)
+        setError("Supabase is offline. You can still reach the login page.")
+        router.replace("/auth/login")
+      } finally {
+        setLoading(false)
+      }
     }
 
-    checkAuth()
-  }, [router])
+    check()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex items-center justify-center">
-      <div className="text-center space-y-8 fade-in">
+      <div className="text-center space-y-8">
         {/* Logo */}
         <div className="relative">
           <div className="w-24 h-24 mx-auto bg-gradient-to-br from-blue-600 to-green-600 rounded-3xl flex items-center justify-center shadow-2xl">
@@ -44,41 +61,42 @@ export default function SplashPage() {
         </div>
 
         {/* App Name */}
-        <div className="slide-up">
+        <div>
           <h1 className="text-4xl font-bold text-gray-900 mb-2">GlucoTracker</h1>
           <p className="text-lg text-gray-600">Smart Blood Sugar Management</p>
         </div>
 
-        {/* Features */}
-        <div className="grid grid-cols-3 gap-6 max-w-md mx-auto slide-up" style={{ animationDelay: "0.2s" }}>
-          <div className="text-center">
-            <div className="w-12 h-12 mx-auto bg-blue-100 rounded-full flex items-center justify-center mb-2">
-              <Activity className="w-6 h-6 text-blue-600" />
+        {/* Fancy feature icons */}
+        <div className="grid grid-cols-3 gap-6 max-w-md mx-auto">
+          {[
+            { icon: Activity, label: "Track Levels" },
+            { icon: TrendingUp, label: "View Trends" },
+            { icon: Heart, label: "Stay Healthy" },
+          ].map(({ icon: Icon, label }) => (
+            <div key={label} className="text-center">
+              <div className="w-12 h-12 mx-auto bg-blue-100 rounded-full flex items-center justify-center mb-2">
+                <Icon className="w-6 h-6 text-blue-600" />
+              </div>
+              <p className="text-sm text-gray-600">{label}</p>
             </div>
-            <p className="text-sm text-gray-600">Track Levels</p>
-          </div>
-          <div className="text-center">
-            <div className="w-12 h-12 mx-auto bg-green-100 rounded-full flex items-center justify-center mb-2">
-              <TrendingUp className="w-6 h-6 text-green-600" />
-            </div>
-            <p className="text-sm text-gray-600">View Trends</p>
-          </div>
-          <div className="text-center">
-            <div className="w-12 h-12 mx-auto bg-purple-100 rounded-full flex items-center justify-center mb-2">
-              <Heart className="w-6 h-6 text-purple-600" />
-            </div>
-            <p className="text-sm text-gray-600">Stay Healthy</p>
-          </div>
+          ))}
         </div>
 
-        {/* Loading indicator */}
-        {isLoading && (
-          <div className="flex items-center justify-center space-x-2 slide-up" style={{ animationDelay: "0.4s" }}>
-            <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>
-            <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
-            <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
+        {/* Loading dots */}
+        {loading && (
+          <div className="flex items-center justify-center gap-2">
+            {[0, 1, 2].map((d) => (
+              <div
+                key={d}
+                style={{ animationDelay: `${d * 0.1}s` }}
+                className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"
+              />
+            ))}
           </div>
         )}
+
+        {/* Connection message (shows only on failure) */}
+        {error && <p className="text-xs text-red-500">{error}</p>}
       </div>
     </div>
   )

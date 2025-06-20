@@ -12,7 +12,7 @@ import { QuickStats } from "../../components/quick-stats"
 import { RecentReadings } from "../../components/recent-readings"
 import { DateSelector } from "../../components/date-selector"
 import { supabase, type BloodSugarReading } from "../../lib/supabase"
-import { format } from "date-fns"
+import { format, isToday, isThisWeek, isThisMonth } from "date-fns"
 
 export default function DashboardPage() {
   const [readings, setReadings] = useState<BloodSugarReading[]>([])
@@ -21,23 +21,37 @@ export default function DashboardPage() {
   const [chartView, setChartView] = useState<"daily" | "weekly" | "monthly">("daily")
   const [user, setUser] = useState<any>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
   // Load user and data on component mount
   useEffect(() => {
     const getUser = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession()
 
-      if (!session) {
-        router.push("/auth/login")
-        return
+        if (sessionError) {
+          console.error("Session error:", sessionError)
+          setError("Failed to get session")
+          return
+        }
+
+        if (!session) {
+          router.push("/auth/login")
+          return
+        }
+
+        setUser(session.user)
+        await loadReadings(session.user.id)
+      } catch (err) {
+        console.error("Error getting user:", err)
+        setError("Failed to load user data")
+      } finally {
+        setIsLoading(false)
       }
-
-      setUser(session.user)
-      await loadReadings(session.user.id)
-      setIsLoading(false)
     }
 
     getUser()
@@ -56,6 +70,8 @@ export default function DashboardPage() {
 
   const loadReadings = async (userId: string) => {
     try {
+      console.log("Loading readings for user:", userId)
+
       const { data, error } = await supabase
         .from("blood_sugar_readings")
         .select("*")
@@ -64,11 +80,15 @@ export default function DashboardPage() {
 
       if (error) {
         console.error("Error loading readings:", error)
+        setError(`Failed to load readings: ${error.message}`)
       } else {
+        console.log("Loaded readings:", data)
         setReadings(data || [])
+        setError(null)
       }
     } catch (err) {
       console.error("Error loading readings:", err)
+      setError("Failed to load readings")
     }
   }
 
@@ -140,12 +160,42 @@ export default function DashboardPage() {
     URL.revokeObjectURL(url)
   }
 
+  // Filter readings based on chart view
+  const getFilteredReadings = (view: "daily" | "weekly" | "monthly") => {
+    const now = new Date()
+    return readings.filter((reading) => {
+      const readingDate = new Date(reading.timestamp)
+      switch (view) {
+        case "daily":
+          return isToday(readingDate)
+        case "weekly":
+          return isThisWeek(readingDate)
+        case "monthly":
+          return isThisMonth(readingDate)
+        default:
+          return true
+      }
+    })
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p>Loading your dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-600 mb-4">⚠️ Error</div>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <Button onClick={() => window.location.reload()}>Retry</Button>
         </div>
       </div>
     )
@@ -163,7 +213,10 @@ export default function DashboardPage() {
               </div>
               <div>
                 <h1 className="text-xl font-semibold text-gray-900">GlucoTracker</h1>
-                <p className="text-sm text-gray-500">Welcome back, {user?.user_metadata?.full_name || user?.email}</p>
+                <p className="text-sm text-gray-500">
+                  Welcome back, {user?.user_metadata?.full_name || user?.email}
+                  {readings.length > 0 && ` • ${readings.length} readings`}
+                </p>
               </div>
             </div>
 
@@ -258,33 +311,18 @@ export default function DashboardPage() {
               <CardContent>
                 <Tabs value={chartView} onValueChange={(v) => setChartView(v as any)}>
                   <TabsList className="grid w-full grid-cols-3 mb-6">
-                    <TabsTrigger value="daily">Daily View</TabsTrigger>
-                    <TabsTrigger value="weekly">Weekly View</TabsTrigger>
-                    <TabsTrigger value="monthly">Monthly View</TabsTrigger>
+                    <TabsTrigger value="daily">Today ({getFilteredReadings("daily").length})</TabsTrigger>
+                    <TabsTrigger value="weekly">This Week ({getFilteredReadings("weekly").length})</TabsTrigger>
+                    <TabsTrigger value="monthly">This Month ({getFilteredReadings("monthly").length})</TabsTrigger>
                   </TabsList>
                   <TabsContent value="daily">
-                    <BloodSugarChart
-                      readings={readings.filter(
-                        (r) => format(new Date(r.timestamp), "yyyy-MM-dd") === format(new Date(), "yyyy-MM-dd"),
-                      )}
-                      view="daily"
-                    />
+                    <BloodSugarChart readings={getFilteredReadings("daily")} view="daily" />
                   </TabsContent>
                   <TabsContent value="weekly">
-                    <BloodSugarChart
-                      readings={readings.filter(
-                        (r) => new Date(r.timestamp) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-                      )}
-                      view="weekly"
-                    />
+                    <BloodSugarChart readings={getFilteredReadings("weekly")} view="weekly" />
                   </TabsContent>
                   <TabsContent value="monthly">
-                    <BloodSugarChart
-                      readings={readings.filter(
-                        (r) => new Date(r.timestamp) > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-                      )}
-                      view="monthly"
-                    />
+                    <BloodSugarChart readings={getFilteredReadings("monthly")} view="monthly" />
                   </TabsContent>
                 </Tabs>
               </CardContent>
